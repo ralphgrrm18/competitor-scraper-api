@@ -18,11 +18,15 @@ export interface ScrapedBusiness {
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+export type ScrapeMode = "maps" | "search";
+
 export async function scrapeGoogleMaps(
   keyword: string,
   lat: number,
-  lng: number
+  lng: number,
+  options: { mode?: ScrapeMode; location?: string } = {}
 ): Promise<ScrapedBusiness[]> {
+  const mode = options.mode ?? "maps";
   const browser = await chromium.launch({
     headless: true,
     args: [
@@ -53,8 +57,11 @@ export async function scrapeGoogleMaps(
       r.abort()
     );
 
-    console.log(`[scrape] fetching place links for "${keyword}" at ${lat},${lng}`);
-    const placeLinks = await getPlaceLinks(context, keyword, lat, lng);
+    console.log(`[scrape] mode=${mode} keyword="${keyword}" at ${lat},${lng}`);
+    const placeLinks =
+      mode === "search" && options.location
+        ? await getSearchPlaceLinks(context, keyword, options.location)
+        : await getPlaceLinks(context, keyword, lat, lng);
     console.log(`[scrape] found ${placeLinks.length} place links`);
 
     if (!placeLinks.length) {
@@ -109,6 +116,64 @@ async function getPlaceLinks(
         const seen = new Set<string>();
         return (anchors as HTMLAnchorElement[])
           .map((a) => a.href)
+          .filter((href) => {
+            if (!href || seen.has(href)) return false;
+            seen.add(href);
+            return true;
+          });
+      }
+    );
+
+    return links.slice(0, 10);
+  } finally {
+    await page.close();
+  }
+}
+
+// Google Search local results (udm=1) — what a desktop user sees when they
+// search on google.com and click the "Maps" / local tab
+async function getSearchPlaceLinks(
+  context: BrowserContext,
+  keyword: string,
+  location: string
+): Promise<string[]> {
+  const page = await context.newPage();
+
+  try {
+    const q = encodeURIComponent(`${keyword} ${location}`);
+    const searchUrl = `https://www.google.com/search?q=${q}&hl=en&gl=us&udm=1`;
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+    await dismissConsentBanner(page);
+
+    // Wait for local result cards to appear
+    await page.waitForSelector(
+      'a[href*="/maps/place/"], div[data-cid], div[jsdata]',
+      { timeout: 15000 }
+    );
+
+    // Scroll to reveal more results
+    for (let i = 0; i < 4; i++) {
+      await page.evaluate(() => window.scrollBy(0, 700));
+      await delay(1000);
+    }
+
+    const links: string[] = await page.$$eval(
+      'a[href*="/maps/place/"]',
+      (anchors) => {
+        const seen = new Set<string>();
+        return (anchors as HTMLAnchorElement[])
+          .map((a) => a.href)
+          // strip tracking params so dedup works reliably
+          .map((href) => {
+            try {
+              const u = new URL(href);
+              // keep only the /maps/place/... path, drop search params
+              return `https://www.google.com${u.pathname}`;
+            } catch {
+              return href;
+            }
+          })
           .filter((href) => {
             if (!href || seen.has(href)) return false;
             seen.add(href);

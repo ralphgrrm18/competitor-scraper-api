@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { geocodeLocation } from "./geocode";
-import { scrapeGoogleMaps } from "./scraper";
+import { scrapeGoogleMaps, ScrapeMode } from "./scraper";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -14,11 +14,12 @@ app.get("/health", (_req, res) => {
 });
 
 app.post("/api/scrape", async (req, res) => {
-  const { keyword, location, lat, lng } = req.body as {
+  const { keyword, location, lat, lng, mode } = req.body as {
     keyword?: string;
     location?: string;
     lat?: number | string;
     lng?: number | string;
+    mode?: ScrapeMode;
   };
 
   if (!keyword?.trim()) {
@@ -49,8 +50,12 @@ app.post("/api/scrape", async (req, res) => {
       coords = await geocodeLocation(location!.trim());
     }
 
-    const results = await scrapeGoogleMaps(keyword.trim(), coords.lat, coords.lng);
-    res.json({ results, coords });
+    const scrapeMode: ScrapeMode = mode === "search" ? "search" : "maps";
+    const results = await scrapeGoogleMaps(keyword.trim(), coords.lat, coords.lng, {
+      mode: scrapeMode,
+      location: location?.trim(),
+    });
+    res.json({ results, coords, mode: scrapeMode });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Scrape failed";
     console.error("[scrape]", message);
