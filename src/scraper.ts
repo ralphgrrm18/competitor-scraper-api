@@ -59,19 +59,19 @@ async function scrapeViaSerp(
     );
   }
 
-  // Always use ll (coordinates) — SerpAPI's location string database is
-  // limited and rejects many common city formats. Coordinates are always
-  // available since we geocode every address input.
+  // Include location in the query — google_local ignores ll coordinates and
+  // its location string database rejects most city formats. Putting the
+  // location in q is what a real user types and what Google ranks against.
+  const q = location ? `${keyword} ${location}` : keyword;
   const params = new URLSearchParams({
     engine: "google_local",
-    q: keyword,
-    ll: `@${lat},${lng},14z`,
+    q,
     hl: "en",
     gl: "us",
     api_key: apiKey,
   });
 
-  console.log(`[serp] engine=google_local q="${keyword}" ll=@${lat},${lng}`);
+  console.log(`[serp] engine=google_local q="${q}"`);
 
   const res = await fetch(`https://serpapi.com/search?${params}`);
   const data = (await res.json()) as SerpResponse;
