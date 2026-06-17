@@ -146,17 +146,21 @@ async function getSearchPlaceLinks(
 
     await dismissConsentBanner(page);
 
-    // Wait for local result cards to appear
-    await page.waitForSelector(
-      'a[href*="/maps/place/"], div[data-cid], div[jsdata]',
-      { timeout: 15000 }
-    );
+    // Wait for Google's standard search container — always present regardless
+    // of whether local cards rendered yet. Map-specific selectors time out in
+    // headless because Google may delay or omit them until JS hydrates.
+    await page.waitForSelector("#search, #rso, #main", { timeout: 15000 });
 
-    // Scroll to reveal more results
+    // Give dynamic local-card JS time to inject place links into the DOM
+    await delay(3000);
+
+    // Scroll to trigger lazy-loaded results
     for (let i = 0; i < 4; i++) {
       await page.evaluate(() => window.scrollBy(0, 700));
-      await delay(1000);
+      await delay(800);
     }
+
+    console.log(`[search] url=${page.url()} title="${await page.title()}"`);
 
     const links: string[] = await page.$$eval(
       'a[href*="/maps/place/"]',
@@ -164,11 +168,9 @@ async function getSearchPlaceLinks(
         const seen = new Set<string>();
         return (anchors as HTMLAnchorElement[])
           .map((a) => a.href)
-          // strip tracking params so dedup works reliably
           .map((href) => {
             try {
               const u = new URL(href);
-              // keep only the /maps/place/... path, drop search params
               return `https://www.google.com${u.pathname}`;
             } catch {
               return href;
@@ -182,6 +184,7 @@ async function getSearchPlaceLinks(
       }
     );
 
+    console.log(`[search] collected ${links.length} place links`);
     return links.slice(0, 10);
   } finally {
     await page.close();
