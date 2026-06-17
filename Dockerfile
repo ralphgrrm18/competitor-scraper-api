@@ -1,5 +1,5 @@
 # Official Playwright image ships with Chromium + all system deps pre-installed
-FROM mcr.microsoft.com/playwright:v1.52.0-jammy
+FROM mcr.microsoft.com/playwright:v1.61.0-jammy
 
 WORKDIR /app
 
