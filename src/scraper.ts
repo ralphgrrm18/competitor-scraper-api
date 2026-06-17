@@ -25,7 +25,17 @@ export async function scrapeGoogleMaps(
 ): Promise<ScrapedBusiness[]> {
   const browser = await chromium.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--single-process",
+      "--no-zygote",
+      "--disable-extensions",
+      "--disable-background-networking",
+      "--memory-pressure-off",
+    ],
   });
 
   try {
@@ -50,16 +60,12 @@ export async function scrapeGoogleMaps(
       return [];
     }
 
-    // Scrape detail pages 3 at a time in parallel
+    // Scrape detail pages sequentially — Railway free tier has limited RAM,
+    // parallel Chromium tabs cause "Target crashed" OOM errors
     const results: ScrapedBusiness[] = [];
-    const CONCURRENCY = 3;
-
-    for (let i = 0; i < placeLinks.length; i += CONCURRENCY) {
-      const batch = placeLinks.slice(i, i + CONCURRENCY);
-      const batchResults = await Promise.all(
-        batch.map((link, j) => scrapePlaceDetail(context, link, i + j + 1))
-      );
-      results.push(...(batchResults.filter(Boolean) as ScrapedBusiness[]));
+    for (let i = 0; i < placeLinks.length; i++) {
+      const result = await scrapePlaceDetail(context, placeLinks[i], i + 1);
+      if (result) results.push(result);
     }
 
     return results;
@@ -119,29 +125,13 @@ async function scrapePlaceDetail(
   url: string,
   rank: number
 ): Promise<ScrapedBusiness | null> {
-  // Retry once on failure — some pages need a second attempt
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const result = await tryScrapePlaceDetail(context, url, rank, attempt);
-    if (result) return result;
-    if (attempt < 2) await delay(1500);
-  }
-  return null;
-}
-
-async function tryScrapePlaceDetail(
-  context: BrowserContext,
-  url: string,
-  rank: number,
-  attempt: number
-): Promise<ScrapedBusiness | null> {
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
     await dismissConsentBanner(page);
 
-    // Wait for business name — try multiple selectors
-    await page.waitForSelector("h1, h1.DUwDvf, [role='main'] h1", { timeout: 15000 });
+    await page.waitForSelector("h1", { timeout: 10000 });
 
     const data = await page.evaluate((): Omit<ScrapedBusiness, "rank" | "mapsUrl"> => {
       function text(sel: string): string {
@@ -251,7 +241,7 @@ async function tryScrapePlaceDetail(
     return { rank, mapsUrl: url, ...data };
   } catch (err) {
     const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
-    console.warn(`[rank ${rank}] attempt ${attempt} failed: ${msg}`);
+    console.warn(`[rank ${rank}] failed: ${msg}`);
     return null;
   } finally {
     await page.close();
