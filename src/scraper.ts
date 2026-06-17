@@ -20,6 +20,107 @@ const USER_AGENT =
 
 export type ScrapeMode = "maps" | "search";
 
+// ─── SerpAPI types ───────────────────────────────────────────────────────────
+
+interface SerpLocalPlace {
+  position?: number;
+  title?: string;
+  place_id?: string;
+  rating?: number;
+  reviews?: number;
+  type?: string;
+  address?: string;
+  phone?: string;
+  hours?: { current_status?: string };
+  links?: { website?: string };
+  website?: string;
+}
+
+interface SerpResponse {
+  local_results?: SerpLocalPlace[];
+  error?: string;
+}
+
+// ─── SerpAPI: Google Search local results ────────────────────────────────────
+// Called for mode="search". No browser needed — results come back in <2s.
+// Uses google_local engine which mirrors the Google Search local tab.
+// Supports either a location string or raw lat/lng coordinates.
+
+async function scrapeViaSerp(
+  keyword: string,
+  lat: number,
+  lng: number,
+  location?: string
+): Promise<ScrapedBusiness[]> {
+  const apiKey = process.env.SERPAPI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "SERPAPI_API_KEY is not set. Add it to Railway → Variables."
+    );
+  }
+
+  const params = new URLSearchParams({
+    engine: "google_local",
+    q: keyword,
+    hl: "en",
+    gl: "us",
+    api_key: apiKey,
+  });
+
+  if (location) {
+    params.set("location", location);
+  } else {
+    params.set("ll", `@${lat},${lng},14z`);
+  }
+
+  console.log(`[serp] engine=google_local q="${keyword}" location="${location ?? `${lat},${lng}`}"`);
+
+  const res = await fetch(`https://serpapi.com/search?${params}`);
+  const data = (await res.json()) as SerpResponse;
+
+  if (data.error) {
+    if (/out of searches|quota|limit|upgrade/i.test(data.error)) {
+      throw new Error(
+        "Google Search quota reached for this month. Switch to Google Maps mode to continue."
+      );
+    }
+    throw new Error(`SerpAPI: ${data.error}`);
+  }
+
+  if (!res.ok) throw new Error(`SerpAPI returned HTTP ${res.status}`);
+
+  const places = data.local_results ?? [];
+  console.log(`[serp] got ${places.length} local results`);
+
+  return places.slice(0, 10).map((p, i): ScrapedBusiness => {
+    const status = p.hours?.current_status ?? "";
+    const openNow = /open now/i.test(status)
+      ? true
+      : /closed|closes/i.test(status)
+      ? false
+      : null;
+
+    return {
+      rank: p.position ?? i + 1,
+      name: p.title ?? "",
+      address: p.address ?? "",
+      rating: p.rating ?? null,
+      reviewCount: p.reviews ?? null,
+      category: p.type ?? "",
+      phone: p.phone ?? null,
+      website: p.links?.website ?? p.website ?? null,
+      openNow,
+      weekdayHours: [],
+      mapsUrl: p.place_id
+        ? `https://www.google.com/maps/place/?q=place_id:${p.place_id}`
+        : "",
+      photoCount: 0,
+    };
+  });
+}
+
+// ─── Main entry point ────────────────────────────────────────────────────────
+
 export async function scrapeGoogleMaps(
   keyword: string,
   lat: number,
@@ -27,6 +128,13 @@ export async function scrapeGoogleMaps(
   options: { mode?: ScrapeMode; location?: string } = {}
 ): Promise<ScrapedBusiness[]> {
   const mode = options.mode ?? "maps";
+
+  // Search mode: SerpAPI handles everything — no browser launched
+  if (mode === "search") {
+    return scrapeViaSerp(keyword, lat, lng, options.location);
+  }
+
+  // Maps mode: Playwright + geolocation spoofing
   const browser = await chromium.launch({
     headless: true,
     args: [
@@ -52,24 +160,16 @@ export async function scrapeGoogleMaps(
       viewport: { width: 1280, height: 900 },
     });
 
-    // Block images/fonts to speed up loading
     await context.route(/\.(png|jpg|jpeg|gif|webp|svg|woff2?|ttf)(\?.*)?$/, (r) =>
       r.abort()
     );
 
-    console.log(`[scrape] mode=${mode} keyword="${keyword}" at ${lat},${lng}`);
-    const placeLinks =
-      mode === "search" && options.location
-        ? await getSearchPlaceLinks(context, keyword, options.location)
-        : await getPlaceLinks(context, keyword, lat, lng);
+    console.log(`[scrape] mode=maps keyword="${keyword}" at ${lat},${lng}`);
+    const placeLinks = await getPlaceLinks(context, keyword, lat, lng);
     console.log(`[scrape] found ${placeLinks.length} place links`);
 
-    if (!placeLinks.length) {
-      await browser.close();
-      return [];
-    }
+    if (!placeLinks.length) return [];
 
-    // Sequential — Railway free tier OOMs with parallel Chromium tabs
     const results: ScrapedBusiness[] = [];
     for (let i = 0; i < placeLinks.length; i++) {
       console.log(`[scrape] scraping rank ${i + 1}/${placeLinks.length}`);
@@ -130,84 +230,6 @@ async function getPlaceLinks(
   }
 }
 
-// Google Search local results — what a desktop user sees on google.com local tab.
-// Uses tbm=lcl (Google's explicit local search vertical).
-// We visit google.com home first to establish a session and clear any consent
-// redirect before hitting the search URL — otherwise Google returns a consent
-// page whose DOM has no #search / #rso containers.
-async function getSearchPlaceLinks(
-  context: BrowserContext,
-  keyword: string,
-  location: string
-): Promise<string[]> {
-  const page = await context.newPage();
-
-  try {
-    // Step 1: establish a Google session (handles consent banner on the home page)
-    await page.goto("https://www.google.com/?hl=en&gl=us", {
-      waitUntil: "domcontentloaded",
-      timeout: 20000,
-    });
-    await dismissConsentBanner(page);
-    await delay(800);
-
-    // Step 2: navigate to local search results
-    const q = encodeURIComponent(`${keyword} ${location}`);
-    const searchUrl = `https://www.google.com/search?q=${q}&hl=en&gl=us&tbm=lcl`;
-    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await dismissConsentBanner(page);
-
-    // Step 3: wait for the search results container
-    try {
-      await page.waitForSelector("#search, #rso, #main, #rcnt", { timeout: 15000 });
-    } catch {
-      const url = page.url();
-      const title = await page.title();
-      const snippet = await page.evaluate(
-        () => document.body?.innerText?.slice(0, 300) ?? ""
-      );
-      console.log(`[search] selector timeout — url=${url} title="${title}"`);
-      console.log(`[search] body snippet: ${snippet}`);
-      throw new Error("Google Search page did not load results");
-    }
-
-    // Step 4: wait for JS-rendered local cards then scroll
-    await delay(2500);
-    for (let i = 0; i < 4; i++) {
-      await page.evaluate(() => window.scrollBy(0, 700));
-      await delay(800);
-    }
-
-    console.log(`[search] url=${page.url()} title="${await page.title()}"`);
-
-    const links: string[] = await page.$$eval(
-      'a[href*="/maps/place/"]',
-      (anchors) => {
-        const seen = new Set<string>();
-        return (anchors as HTMLAnchorElement[])
-          .map((a) => a.href)
-          .map((href) => {
-            try {
-              const u = new URL(href);
-              return `https://www.google.com${u.pathname}`;
-            } catch {
-              return href;
-            }
-          })
-          .filter((href) => {
-            if (!href || seen.has(href)) return false;
-            seen.add(href);
-            return true;
-          });
-      }
-    );
-
-    console.log(`[search] collected ${links.length} place links`);
-    return links.slice(0, 10);
-  } finally {
-    await page.close();
-  }
-}
 
 async function scrapePlaceDetail(
   context: BrowserContext,
