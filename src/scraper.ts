@@ -119,14 +119,29 @@ async function scrapePlaceDetail(
   url: string,
   rank: number
 ): Promise<ScrapedBusiness | null> {
+  // Retry once on failure — some pages need a second attempt
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const result = await tryScrapePlaceDetail(context, url, rank, attempt);
+    if (result) return result;
+    if (attempt < 2) await delay(1500);
+  }
+  return null;
+}
+
+async function tryScrapePlaceDetail(
+  context: BrowserContext,
+  url: string,
+  rank: number,
+  attempt: number
+): Promise<ScrapedBusiness | null> {
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await dismissConsentBanner(page);
 
-    // Wait for the business name to appear
-    await page.waitForSelector("h1", { timeout: 10000 });
+    // Wait for business name — try multiple selectors
+    await page.waitForSelector("h1, h1.DUwDvf, [role='main'] h1", { timeout: 15000 });
 
     const data = await page.evaluate((): Omit<ScrapedBusiness, "rank" | "mapsUrl"> => {
       function text(sel: string): string {
@@ -147,16 +162,26 @@ async function scrapePlaceDetail(
       const rating = ratingRaw ? parseFloat(ratingRaw) : null;
 
       // --- Review count ---
-      const reviewAriaEl = document.querySelector("div.F7nice span[aria-label]");
-      const reviewAriaLabel = reviewAriaEl?.getAttribute("aria-label") ?? "";
-      const reviewMatch = reviewAriaLabel.match(/([\d,]+)\s*review/i) ||
-        reviewAriaLabel.match(/([\d,\.]+[KkMm]?)\s/);
+      // Strategy 1: any element whose aria-label explicitly says "N reviews"
       let reviewCount: number | null = null;
-      if (reviewMatch) {
-        const raw = reviewMatch[1].replace(/,/g, "");
-        if (raw.match(/[Kk]$/)) reviewCount = Math.round(parseFloat(raw) * 1000);
-        else if (raw.match(/[Mm]$/)) reviewCount = Math.round(parseFloat(raw) * 1_000_000);
-        else reviewCount = parseInt(raw);
+      const allLabelled = Array.from(document.querySelectorAll("[aria-label]"));
+      for (const el of allLabelled) {
+        const label = el.getAttribute("aria-label") ?? "";
+        const m = label.match(/^([\d,]+)\s*review/i);
+        if (m) { reviewCount = parseInt(m[1].replace(/,/g, "")); break; }
+      }
+      // Strategy 2: parenthesized number inside the rating block e.g. "(1,234)"
+      if (reviewCount === null) {
+        const ratingBlock = document.querySelector("div.F7nice, [jsaction*='review']");
+        const parenMatch = ratingBlock?.textContent?.match(/\(([\d,]+)\)/);
+        if (parenMatch) reviewCount = parseInt(parenMatch[1].replace(/,/g, ""));
+      }
+      // Strategy 3: any button whose text contains "N reviews"
+      if (reviewCount === null) {
+        for (const btn of Array.from(document.querySelectorAll("button, a"))) {
+          const m = (btn.textContent ?? "").match(/([\d,]+)\s*review/i);
+          if (m) { reviewCount = parseInt(m[1].replace(/,/g, "")); break; }
+        }
       }
 
       // --- Category ---
@@ -224,7 +249,9 @@ async function scrapePlaceDetail(
     });
 
     return { rank, mapsUrl: url, ...data };
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    console.warn(`[rank ${rank}] attempt ${attempt} failed: ${msg}`);
     return null;
   } finally {
     await page.close();
