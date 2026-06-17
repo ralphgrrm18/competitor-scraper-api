@@ -7,14 +7,7 @@ const app = express();
 const PORT = process.env.PORT ?? 3001;
 
 app.use(express.json());
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL
-      ? [process.env.FRONTEND_URL, "http://localhost:3000"]
-      : "*",
-    methods: ["POST", "GET"],
-  })
-);
+app.use(cors({ origin: "*", methods: ["POST", "GET"] }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
