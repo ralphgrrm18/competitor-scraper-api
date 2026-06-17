@@ -30,11 +30,11 @@ export async function scrapeGoogleMaps(
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
-      "--single-process",
-      "--no-zygote",
       "--disable-extensions",
       "--disable-background-networking",
-      "--memory-pressure-off",
+      "--disable-default-apps",
+      "--no-first-run",
+      "--mute-audio",
     ],
   });
 
@@ -53,21 +53,24 @@ export async function scrapeGoogleMaps(
       r.abort()
     );
 
+    console.log(`[scrape] fetching place links for "${keyword}" at ${lat},${lng}`);
     const placeLinks = await getPlaceLinks(context, keyword, lat, lng);
+    console.log(`[scrape] found ${placeLinks.length} place links`);
 
     if (!placeLinks.length) {
       await browser.close();
       return [];
     }
 
-    // Scrape detail pages sequentially — Railway free tier has limited RAM,
-    // parallel Chromium tabs cause "Target crashed" OOM errors
+    // Sequential — Railway free tier OOMs with parallel Chromium tabs
     const results: ScrapedBusiness[] = [];
     for (let i = 0; i < placeLinks.length; i++) {
+      console.log(`[scrape] scraping rank ${i + 1}/${placeLinks.length}`);
       const result = await scrapePlaceDetail(context, placeLinks[i], i + 1);
       if (result) results.push(result);
     }
 
+    console.log(`[scrape] done — ${results.length}/${placeLinks.length} succeeded`);
     return results;
   } finally {
     await browser.close();
