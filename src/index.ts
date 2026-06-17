@@ -14,18 +14,41 @@ app.get("/health", (_req, res) => {
 });
 
 app.post("/api/scrape", async (req, res) => {
-  const { keyword, location } = req.body as {
+  const { keyword, location, lat, lng } = req.body as {
     keyword?: string;
     location?: string;
+    lat?: number | string;
+    lng?: number | string;
   };
 
-  if (!keyword?.trim() || !location?.trim()) {
-    res.status(400).json({ error: "keyword and location are required" });
+  if (!keyword?.trim()) {
+    res.status(400).json({ error: "keyword is required" });
+    return;
+  }
+
+  const hasManualCoords =
+    lat !== undefined && lng !== undefined && lat !== "" && lng !== "";
+
+  if (!hasManualCoords && !location?.trim()) {
+    res.status(400).json({ error: "provide either location or lat/lng coordinates" });
     return;
   }
 
   try {
-    const coords = await geocodeLocation(location.trim());
+    let coords: { lat: number; lng: number; displayName: string };
+
+    if (hasManualCoords) {
+      const parsedLat = parseFloat(String(lat));
+      const parsedLng = parseFloat(String(lng));
+      if (isNaN(parsedLat) || isNaN(parsedLng)) {
+        res.status(400).json({ error: "lat and lng must be valid numbers" });
+        return;
+      }
+      coords = { lat: parsedLat, lng: parsedLng, displayName: `${parsedLat}, ${parsedLng}` };
+    } else {
+      coords = await geocodeLocation(location!.trim());
+    }
+
     const results = await scrapeGoogleMaps(keyword.trim(), coords.lat, coords.lng);
     res.json({ results, coords });
   } catch (err) {
