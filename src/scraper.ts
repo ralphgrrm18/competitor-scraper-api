@@ -130,8 +130,11 @@ async function getPlaceLinks(
   }
 }
 
-// Google Search local results (udm=1) — what a desktop user sees when they
-// search on google.com and click the "Maps" / local tab
+// Google Search local results — what a desktop user sees on google.com local tab.
+// Uses tbm=lcl (Google's explicit local search vertical).
+// We visit google.com home first to establish a session and clear any consent
+// redirect before hitting the search URL — otherwise Google returns a consent
+// page whose DOM has no #search / #rso containers.
 async function getSearchPlaceLinks(
   context: BrowserContext,
   keyword: string,
@@ -140,21 +143,36 @@ async function getSearchPlaceLinks(
   const page = await context.newPage();
 
   try {
-    const q = encodeURIComponent(`${keyword} ${location}`);
-    const searchUrl = `https://www.google.com/search?q=${q}&hl=en&gl=us&udm=1`;
-    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // Step 1: establish a Google session (handles consent banner on the home page)
+    await page.goto("https://www.google.com/?hl=en&gl=us", {
+      waitUntil: "domcontentloaded",
+      timeout: 20000,
+    });
+    await dismissConsentBanner(page);
+    await delay(800);
 
+    // Step 2: navigate to local search results
+    const q = encodeURIComponent(`${keyword} ${location}`);
+    const searchUrl = `https://www.google.com/search?q=${q}&hl=en&gl=us&tbm=lcl`;
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     await dismissConsentBanner(page);
 
-    // Wait for Google's standard search container — always present regardless
-    // of whether local cards rendered yet. Map-specific selectors time out in
-    // headless because Google may delay or omit them until JS hydrates.
-    await page.waitForSelector("#search, #rso, #main", { timeout: 15000 });
+    // Step 3: wait for the search results container
+    try {
+      await page.waitForSelector("#search, #rso, #main, #rcnt", { timeout: 15000 });
+    } catch {
+      const url = page.url();
+      const title = await page.title();
+      const snippet = await page.evaluate(
+        () => document.body?.innerText?.slice(0, 300) ?? ""
+      );
+      console.log(`[search] selector timeout — url=${url} title="${title}"`);
+      console.log(`[search] body snippet: ${snippet}`);
+      throw new Error("Google Search page did not load results");
+    }
 
-    // Give dynamic local-card JS time to inject place links into the DOM
-    await delay(3000);
-
-    // Scroll to trigger lazy-loaded results
+    // Step 4: wait for JS-rendered local cards then scroll
+    await delay(2500);
     for (let i = 0; i < 4; i++) {
       await page.evaluate(() => window.scrollBy(0, 700));
       await delay(800);
