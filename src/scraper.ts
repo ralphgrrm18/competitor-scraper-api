@@ -315,9 +315,9 @@ async function scrapePlaceDetail(
         document.querySelector("span.ZDu9vd span") ||
         document.querySelector('[data-hide-tooltip-on-mobile] span');
       const openText = (openEl as HTMLElement)?.innerText?.toLowerCase() ?? "";
-      const openNow = openText.includes("open now")
+      const openNow = /open\s+now|open\s+24/i.test(openText)
         ? true
-        : openText.includes("closed") || openText.includes("close")
+        : /\bclosed\b/i.test(openText)
         ? false
         : null;
 
@@ -328,10 +328,18 @@ async function scrapePlaceDetail(
         .filter(Boolean);
 
       // --- Photo count ---
-      const photoCountEl = document.querySelector('[aria-label*="photo" i][aria-label*="See" i]');
+      // Strategy 1: aria-label on button/link containing "photo" and a number
+      const photoCountEl = document.querySelector('[aria-label*="photo" i]');
       const photoLabel = photoCountEl?.getAttribute("aria-label") ?? "";
       const photoMatch = photoLabel.match(/([\d,]+)/);
-      const photoCount = photoMatch ? parseInt(photoMatch[1].replace(/,/g, "")) : 0;
+      let photoCount = photoMatch ? parseInt(photoMatch[1].replace(/,/g, ""), 10) : 0;
+      // Strategy 2: any element whose text content says "N photos"
+      if (photoCount === 0) {
+        for (const el of Array.from(document.querySelectorAll("button, a, span"))) {
+          const m = (el.textContent ?? "").match(/([\d,]+)\s+photos?/i);
+          if (m) { photoCount = parseInt(m[1].replace(/,/g, ""), 10); break; }
+        }
+      }
 
       return {
         name,
