@@ -11,6 +11,7 @@ export interface ScrapedBusiness {
   website: string | null;
   openNow: boolean | null;
   weekdayHours: string[];
+  todayHours: string | null;
   mapsUrl: string;
   photoCount: number;
 }
@@ -98,6 +99,11 @@ async function scrapeViaSerp(
       ? false
       : null;
 
+    const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+    const today = days[new Date().getDay()];
+    const status = p.hours?.current_status ?? "";
+    const todayHours = status ? `${today} ${status}` : null;
+
     return {
       rank: p.position ?? i + 1,
       name: p.title ?? "",
@@ -109,6 +115,7 @@ async function scrapeViaSerp(
       website: p.links?.website ?? p.website ?? null,
       openNow,
       weekdayHours: [],
+      todayHours,
       mapsUrl: p.place_id
         ? `https://www.google.com/maps/place/?q=place_id:${p.place_id}`
         : "",
@@ -407,7 +414,7 @@ async function scrapePlaceDetail(
       console.log(`[rank ${rank}] openNow fallback: today=${today} row="${todayRow}" → ${openNow}`);
     }
 
-    return { rank, mapsUrl: url, ...data, openNow };
+    return { rank, mapsUrl: url, ...data, openNow, todayHours: null };
   } catch (err) {
     const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
     console.warn(`[rank ${rank}] failed: ${msg}`);
