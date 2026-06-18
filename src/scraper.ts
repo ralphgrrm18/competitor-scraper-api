@@ -101,7 +101,6 @@ async function scrapeViaSerp(
 
     const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
     const today = days[new Date().getDay()];
-    const status = p.hours?.current_status ?? "";
     const todayHours = status ? `${today} ${status}` : null;
 
     return {
