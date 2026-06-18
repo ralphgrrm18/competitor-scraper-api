@@ -167,7 +167,7 @@ export async function scrapeGoogleMaps(
 
     if (!placeLinks.length) return [];
 
-    const CONCURRENCY = 3;
+    const CONCURRENCY = 2;
     const ordered: (ScrapedBusiness | null)[] = new Array(placeLinks.length).fill(null);
     const executing = new Set<Promise<void>>();
 
