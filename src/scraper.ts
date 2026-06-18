@@ -326,13 +326,6 @@ async function scrapePlaceDetail(
         : /\bclosed\b/i.test(openText)
         ? false
         : null;
-      // Fallback: derive from today's hours row when the status element is absent
-      if (openNow === null && weekdayHours.length > 0) {
-        const today = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
-        const todayRow = weekdayHours.find((r) => r.includes(today)) ?? "";
-        if (/open 24 hours/i.test(todayRow)) openNow = true;
-        else if (/\bclosed\b/i.test(todayRow)) openNow = false;
-      }
 
       // --- Photo count ---
       // Strategy 1: aria-label on any element containing "photo" and a number
@@ -369,7 +362,18 @@ async function scrapePlaceDetail(
       };
     });
 
-    return { rank, mapsUrl: url, ...data };
+    // Fallback: derive openNow from today's hours row (browser context can't reliably mutate let)
+    let openNow = data.openNow;
+    if (openNow === null && data.weekdayHours.length > 0) {
+      const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+      const today = days[new Date().getDay()];
+      const todayRow = data.weekdayHours.find((r) => r.includes(today)) ?? "";
+      if (/open 24 hours/i.test(todayRow)) openNow = true;
+      else if (/\bclosed\b/i.test(todayRow)) openNow = false;
+      console.log(`[rank ${rank}] openNow fallback: today=${today} row="${todayRow}" → ${openNow}`);
+    }
+
+    return { rank, mapsUrl: url, ...data, openNow };
   } catch (err) {
     const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
     console.warn(`[rank ${rank}] failed: ${msg}`);
