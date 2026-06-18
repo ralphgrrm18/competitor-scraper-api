@@ -236,13 +236,14 @@ async function scrapeListPage(
         const reviewMatch = reviewRaw.match(/([\d,]+)/);
         const reviewCount = reviewMatch ? parseInt(reviewMatch[1].replace(/,/g, "")) : null;
 
-        // W4Efsd spans contain category, address snippets, open/closed info
-        const infoSpans = Array.from(card.querySelectorAll('.W4Efsd')).map(
-          (el) => (el as HTMLElement).innerText?.trim() ?? ""
-        ).filter(Boolean);
+        // The info block contains "Category · Address · Open/Closed · Phone" separated by ·
+        const infoEl = card.querySelector('.W4Efsd') as HTMLElement | null;
+        const infoText = infoEl?.innerText?.trim() ?? "";
+        const parts = infoText.split(/[·\n]/).map(s => s.trim()).filter(Boolean);
 
-        const category = infoSpans[0] ?? "";
-        const address = infoSpans.find(s => /\d/.test(s) && s !== infoSpans[0]) ?? infoSpans[1] ?? "";
+        // Category is first part (no digits usually), address has digits or street keywords
+        const category = parts.find(p => !/^\d/.test(p) && !/^[(+]/.test(p) && !/open|close/i.test(p)) ?? "";
+        const address = parts.find(p => /\d/.test(p) && !/^[(+\d].*\d{4}/.test(p) && !/open|close/i.test(p)) ?? "";
 
         const fullText = card.textContent ?? "";
         const openNow = /open now|open 24/i.test(fullText)
