@@ -32,7 +32,7 @@ interface SerpLocalPlace {
   type?: string;
   address?: string;
   phone?: string;
-  hours?: { current_status?: string };
+  hours?: string | { current_status?: string };
   links?: { website?: string };
   website?: string;
 }
@@ -92,16 +92,16 @@ async function scrapeViaSerp(
   console.log(`[serp] got ${places.length} local results`);
 
   return places.slice(0, 10).map((p, i): ScrapedBusiness => {
-    const status = p.hours?.current_status ?? "";
-    const openNow = /open now/i.test(status)
+    const hoursRaw = typeof p.hours === "string" ? p.hours : (p.hours?.current_status ?? "");
+    const openNow = /open now|open 24/i.test(hoursRaw)
       ? true
-      : /closed|closes/i.test(status)
+      : /closed|closes/i.test(hoursRaw)
       ? false
       : null;
 
     const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
     const today = days[new Date().getDay()];
-    const todayHours = status ? `${today} ${status}` : null;
+    const todayHours = hoursRaw ? `${today} · ${hoursRaw}` : null;
 
     return {
       rank: p.position ?? i + 1,
