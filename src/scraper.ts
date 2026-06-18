@@ -179,7 +179,7 @@ export async function scrapeGoogleMaps(
 
     if (!placeLinks.length) return [];
 
-    const CONCURRENCY = 3;
+    const CONCURRENCY = 2;
     const ordered: (ScrapedBusiness | null)[] = new Array(placeLinks.length).fill(null);
     const executing = new Set<Promise<void>>();
 
@@ -230,22 +230,13 @@ async function getPlaceLinks(
     // Wait for the results feed
     await page.waitForSelector('[role="feed"]', { timeout: 15000 });
 
-    // Scroll the feed to load more results — keep scrolling until 20 links found or feed stops growing
-    let prevCount = 0;
-    for (let i = 0; i < 12; i++) {
+    // Scroll the feed to load more results
+    for (let i = 0; i < 5; i++) {
       await page.evaluate(() => {
         const feed = document.querySelector('[role="feed"]');
         if (feed) feed.scrollTop += 1500;
       });
-      await delay(1000);
-
-      const count = await page.$$eval(
-        '[role="feed"] a[href*="/maps/place/"]',
-        (anchors) => new Set((anchors as HTMLAnchorElement[]).map((a) => a.href)).size
-      );
-      if (count >= 10) break;
-      if (count === prevCount && i > 3) break; // feed stopped growing
-      prevCount = count;
+      await delay(700);
     }
 
     const links: string[] = await page.$$eval(
