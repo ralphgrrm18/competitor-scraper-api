@@ -90,7 +90,7 @@ async function scrapeViaSerp(
   const places = data.local_results ?? [];
   console.log(`[serp] got ${places.length} local results`);
 
-  return places.slice(0, 20).map((p, i): ScrapedBusiness => {
+  return places.slice(0, 10).map((p, i): ScrapedBusiness => {
     const status = p.hours?.current_status ?? "";
     const openNow = /open now/i.test(status)
       ? true
@@ -237,7 +237,7 @@ async function getPlaceLinks(
         '[role="feed"] a[href*="/maps/place/"]',
         (anchors) => new Set((anchors as HTMLAnchorElement[]).map((a) => a.href)).size
       );
-      if (count >= 20) break;
+      if (count >= 10) break;
       if (count === prevCount && i > 3) break; // feed stopped growing
       prevCount = count;
     }
@@ -256,7 +256,7 @@ async function getPlaceLinks(
       }
     );
 
-    return links.slice(0, 20);
+    return links.slice(0, 10);
   } finally {
     await page.close();
   }
