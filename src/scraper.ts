@@ -67,7 +67,7 @@ async function scrapeViaSerp(
     ll,
     hl: "en",
     gl: "us",
-    num: "20",
+    num: "10",
     api_key: apiKey,
   });
 
