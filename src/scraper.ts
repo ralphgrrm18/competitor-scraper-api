@@ -1,4 +1,4 @@
-import { chromium, BrowserContext, Page } from "playwright";
+import { chromium, BrowserContext } from "playwright";
 
 export interface ScrapedBusiness {
   rank: number;
@@ -139,6 +139,8 @@ export async function scrapeGoogleMaps(
   }
 
   // Maps mode: Playwright + geolocation spoofing
+  // Extracts all data from the list page only — no detail page visits.
+  // This keeps memory usage low enough for Render's 512MB free tier.
   const browser = await chromium.launch({
     headless: true,
     args: [
@@ -151,6 +153,11 @@ export async function scrapeGoogleMaps(
       "--disable-default-apps",
       "--no-first-run",
       "--mute-audio",
+      "--no-zygote",
+      "--single-process",
+      "--disable-software-rasterizer",
+      "--js-flags=--max-old-space-size=128",
+      "--disable-features=TranslateUI,BlinkGenPropertyTrees",
     ],
   });
 
@@ -161,7 +168,7 @@ export async function scrapeGoogleMaps(
       userAgent: USER_AGENT,
       locale: "en-US",
       timezoneId: "America/New_York",
-      viewport: { width: 1280, height: 900 },
+      viewport: { width: 800, height: 600 },
     });
 
     await context.route(/\.(png|jpg|jpeg|gif|webp|svg|woff2?|ttf|mp4|mp3|ogg|wasm)(\?.*)?$/, (r) =>
@@ -174,63 +181,29 @@ export async function scrapeGoogleMaps(
     });
 
     console.log(`[scrape] mode=maps keyword="${keyword}" at ${lat},${lng}`);
-    const placeLinks = await getPlaceLinks(context, keyword, lat, lng);
-    console.log(`[scrape] found ${placeLinks.length} place links`);
-
-    if (!placeLinks.length) return [];
-
-    const CONCURRENCY = 2;
-    const ordered: (ScrapedBusiness | null)[] = new Array(placeLinks.length).fill(null);
-    const executing = new Set<Promise<void>>();
-
-    for (let i = 0; i < placeLinks.length; i++) {
-      const idx = i;
-      console.log(`[scrape] queuing rank ${idx + 1}/${placeLinks.length}`);
-      const p: Promise<void> = scrapePlaceDetail(context, placeLinks[idx], idx + 1)
-        .then((r) => { ordered[idx] = r; })
-        .finally(() => executing.delete(p));
-      executing.add(p);
-      if (executing.size >= CONCURRENCY) await Promise.race(executing);
-    }
-    await Promise.all(executing);
-
-    // Retry any crashed/timed-out pages sequentially
-    const toRetry = placeLinks
-      .map((link, i) => ({ link, i }))
-      .filter(({ i }) => ordered[i] === null);
-    if (toRetry.length > 0) {
-      console.log(`[scrape] retrying ${toRetry.length} failed page(s) sequentially`);
-      for (const { link, i } of toRetry) {
-        ordered[i] = await scrapePlaceDetail(context, link, i + 1);
-      }
-    }
-
-    const results = ordered.filter((r): r is ScrapedBusiness => r !== null);
-    console.log(`[scrape] done — ${results.length}/${placeLinks.length} succeeded`);
+    const results = await scrapeListPage(context, keyword, lat, lng);
+    console.log(`[scrape] done — ${results.length} results from list page`);
     return results;
   } finally {
     await browser.close();
   }
 }
 
-async function getPlaceLinks(
+async function scrapeListPage(
   context: BrowserContext,
   keyword: string,
   lat: number,
   lng: number
-): Promise<string[]> {
+): Promise<ScrapedBusiness[]> {
   const page = await context.newPage();
 
   try {
     const searchUrl = `https://www.google.com/maps/search/${encodeURIComponent(keyword)}/@${lat},${lng},14z?hl=en`;
     await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-
     await dismissConsentBanner(page);
-
-    // Wait for the results feed
     await page.waitForSelector('[role="feed"]', { timeout: 15000 });
 
-    // Scroll the feed to load more results
+    // Scroll to load more cards
     for (let i = 0; i < 5; i++) {
       await page.evaluate(() => {
         const feed = document.querySelector('[role="feed"]');
@@ -239,182 +212,77 @@ async function getPlaceLinks(
       await delay(700);
     }
 
-    const links: string[] = await page.$$eval(
-      '[role="feed"] a[href*="/maps/place/"]',
-      (anchors) => {
-        const seen = new Set<string>();
-        return (anchors as HTMLAnchorElement[])
-          .map((a) => a.href)
-          .filter((href) => {
-            if (!href || seen.has(href)) return false;
-            seen.add(href);
-            return true;
-          });
-      }
-    );
+    const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+    const today = days[new Date().getDay()];
 
-    return links.slice(0, 10);
+    const results: ScrapedBusiness[] = await page.evaluate((todayName: string) => {
+      const cards = Array.from(document.querySelectorAll('.Nv2PK'));
+      const seen = new Set<string>();
+      const businesses: ScrapedBusiness[] = [];
+
+      for (const card of cards) {
+        const anchor = card.querySelector('a.hfpxzc') as HTMLAnchorElement | null;
+        const mapsUrl = anchor?.href ?? "";
+        if (!mapsUrl || seen.has(mapsUrl)) continue;
+        seen.add(mapsUrl);
+
+        const name = (card.querySelector('.qBF1Pd') as HTMLElement)?.innerText?.trim() ?? "";
+        if (!name) continue;
+
+        const ratingRaw = (card.querySelector('.MW4etd') as HTMLElement)?.innerText?.trim();
+        const rating = ratingRaw ? parseFloat(ratingRaw.replace(",", ".")) : null;
+
+        const reviewRaw = (card.querySelector('.UY7F9') as HTMLElement)?.innerText?.trim() ?? "";
+        const reviewMatch = reviewRaw.match(/([\d,]+)/);
+        const reviewCount = reviewMatch ? parseInt(reviewMatch[1].replace(/,/g, "")) : null;
+
+        // W4Efsd spans contain category, address snippets, open/closed info
+        const infoSpans = Array.from(card.querySelectorAll('.W4Efsd')).map(
+          (el) => (el as HTMLElement).innerText?.trim() ?? ""
+        ).filter(Boolean);
+
+        const category = infoSpans[0] ?? "";
+        const address = infoSpans.find(s => /\d/.test(s) && s !== infoSpans[0]) ?? infoSpans[1] ?? "";
+
+        const fullText = card.textContent ?? "";
+        const openNow = /open now|open 24/i.test(fullText)
+          ? true
+          : /\bclosed\b/i.test(fullText)
+          ? false
+          : null;
+
+        const hoursMatch = fullText.match(/closes?\s+\d+\s*[ap]m|open\s+24\s+hours|open\s+now/i);
+        const todayHours = hoursMatch ? `${todayName} · ${hoursMatch[0].trim()}` : null;
+
+        businesses.push({
+          rank: businesses.length + 1,
+          name,
+          address,
+          rating,
+          reviewCount,
+          category,
+          phone: null,
+          website: null,
+          openNow,
+          weekdayHours: [],
+          todayHours,
+          mapsUrl,
+          photoCount: 0,
+        });
+
+        if (businesses.length >= 10) break;
+      }
+
+      return businesses;
+    }, today) as ScrapedBusiness[];
+
+    return results;
   } finally {
     await page.close();
   }
 }
 
-
-async function scrapePlaceDetail(
-  context: BrowserContext,
-  url: string,
-  rank: number
-): Promise<ScrapedBusiness | null> {
-  const page = await context.newPage();
-
-  try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
-    await dismissConsentBanner(page);
-
-    await page.waitForSelector("h1", { timeout: 10000 });
-
-    const data = await page.evaluate((): Omit<ScrapedBusiness, "rank" | "mapsUrl" | "todayHours"> => {
-      function text(sel: string): string {
-        return document.querySelector(sel)?.textContent?.trim() ?? "";
-      }
-
-      // --- Name ---
-      const name =
-        (document.querySelector("h1.DUwDvf") as HTMLElement)?.innerText?.trim() ||
-        (document.querySelector("h1") as HTMLElement)?.innerText?.trim() ||
-        "";
-
-      // --- Rating ---
-      const ratingEl =
-        document.querySelector('div.F7nice span[aria-hidden="true"]') ||
-        document.querySelector('[data-attrid="kc:/collection/knowledge_panels/has_feature_interest:star_score"] span[aria-hidden]');
-      const ratingRaw = ratingEl?.textContent?.trim().replace(",", ".");
-      const rating = ratingRaw ? parseFloat(ratingRaw) : null;
-
-      // --- Review count ---
-      // Strategy 1: any element whose aria-label explicitly says "N reviews"
-      let reviewCount: number | null = null;
-      const allLabelled = Array.from(document.querySelectorAll("[aria-label]"));
-      for (const el of allLabelled) {
-        const label = el.getAttribute("aria-label") ?? "";
-        const m = label.match(/^([\d,]+)\s*review/i);
-        if (m) { reviewCount = parseInt(m[1].replace(/,/g, "")); break; }
-      }
-      // Strategy 2: parenthesized number inside the rating block e.g. "(1,234)"
-      if (reviewCount === null) {
-        const ratingBlock = document.querySelector("div.F7nice, [jsaction*='review']");
-        const parenMatch = ratingBlock?.textContent?.match(/\(([\d,]+)\)/);
-        if (parenMatch) reviewCount = parseInt(parenMatch[1].replace(/,/g, ""));
-      }
-      // Strategy 3: any button whose text contains "N reviews"
-      if (reviewCount === null) {
-        for (const btn of Array.from(document.querySelectorAll("button, a"))) {
-          const m = (btn.textContent ?? "").match(/([\d,]+)\s*review/i);
-          if (m) { reviewCount = parseInt(m[1].replace(/,/g, "")); break; }
-        }
-      }
-
-      // --- Category ---
-      const category =
-        text("button.DkEaL") ||
-        text('[jsaction*="category"]') ||
-        (document.querySelector(".YhemCb") as HTMLElement)?.innerText?.trim() ||
-        "";
-
-      // --- Address ---
-      const addressEl =
-        document.querySelector('[data-item-id="address"] .Io6YTe') ||
-        document.querySelector('button[aria-label*="Address"] .Io6YTe') ||
-        document.querySelector('[data-tooltip="Copy address"] .Io6YTe');
-      const address = (addressEl as HTMLElement)?.innerText?.trim() ?? "";
-
-      // --- Phone ---
-      const phoneEl =
-        document.querySelector('[data-item-id*="phone:tel"] .Io6YTe') ||
-        document.querySelector('[data-tooltip="Copy phone number"] .Io6YTe') ||
-        document.querySelector('[aria-label*="Phone"] .Io6YTe');
-      const phone = (phoneEl as HTMLElement)?.innerText?.trim() || null;
-
-      // --- Website ---
-      const websiteEl =
-        (document.querySelector('a[data-item-id="authority"]') as HTMLAnchorElement) ||
-        (document.querySelector('a[aria-label*="website" i]') as HTMLAnchorElement);
-      const website = websiteEl?.href || null;
-
-      // --- Hours ---
-      const hoursRows = Array.from(document.querySelectorAll("table.WgFkxc tr, .t39EBf tr"));
-      const weekdayHours = hoursRows
-        .map((r) => (r as HTMLElement).innerText?.trim())
-        .filter(Boolean);
-
-      // --- Open / closed ---
-      const openEl =
-        document.querySelector("span.ZDu9vd span") ||
-        document.querySelector('[data-hide-tooltip-on-mobile] span');
-      const openText = (openEl as HTMLElement)?.innerText?.toLowerCase() ?? "";
-      let openNow: boolean | null = /open\s+now|open\s+24/i.test(openText)
-        ? true
-        : /\bclosed\b/i.test(openText)
-        ? false
-        : null;
-
-      // --- Photo count ---
-      // Strategy 1: aria-label on any element containing "photo" and a number
-      const photoCountEl = document.querySelector('[aria-label*="photo" i]');
-      const photoLabel = photoCountEl?.getAttribute("aria-label") ?? "";
-      const photoMatch = photoLabel.match(/([\d,]+)/);
-      let photoCount = photoMatch ? parseInt(photoMatch[1].replace(/,/g, ""), 10) : 0;
-      // Strategy 2: text content "N photos"
-      if (photoCount === 0) {
-        for (const el of Array.from(document.querySelectorAll("button, a, span"))) {
-          const m = (el.textContent ?? "").match(/([\d,]+)\s+photos?/i);
-          if (m) { photoCount = parseInt(m[1].replace(/,/g, ""), 10); break; }
-        }
-      }
-      // Strategy 3: scan all aria-labels on the page
-      if (photoCount === 0) {
-        for (const el of Array.from(document.querySelectorAll("[aria-label]"))) {
-          const m = (el.getAttribute("aria-label") ?? "").match(/([\d,]+)\s*photos?/i);
-          if (m) { photoCount = parseInt(m[1].replace(/,/g, ""), 10); break; }
-        }
-      }
-
-      return {
-        name,
-        rating,
-        reviewCount,
-        category,
-        address,
-        phone,
-        website,
-        openNow,
-        weekdayHours,
-        photoCount,
-      };
-    });
-
-    // Fallback: derive openNow from today's hours row (browser context can't reliably mutate let)
-    let openNow = data.openNow;
-    if (openNow === null && data.weekdayHours.length > 0) {
-      const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-      const today = days[new Date().getDay()];
-      const todayRow = data.weekdayHours.find((r) => r.includes(today)) ?? "";
-      if (/open 24 hours/i.test(todayRow)) openNow = true;
-      else if (/\bclosed\b/i.test(todayRow)) openNow = false;
-      console.log(`[rank ${rank}] openNow fallback: today=${today} row="${todayRow}" → ${openNow}`);
-    }
-
-    return { rank, mapsUrl: url, ...data, openNow, todayHours: null };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message.split("\n")[0] : String(err);
-    console.warn(`[rank ${rank}] failed: ${msg}`);
-    return null;
-  } finally {
-    await page.close();
-  }
-}
-
-async function dismissConsentBanner(page: Page): Promise<void> {
+async function dismissConsentBanner(page: Awaited<ReturnType<BrowserContext["newPage"]>>): Promise<void> {
   const selectors = [
     'button[aria-label="Accept all"]',
     'button:has-text("Accept all")',
