@@ -167,13 +167,22 @@ export async function scrapeGoogleMaps(
 
     if (!placeLinks.length) return [];
 
-    const results: ScrapedBusiness[] = [];
-    for (let i = 0; i < placeLinks.length; i++) {
-      console.log(`[scrape] scraping rank ${i + 1}/${placeLinks.length}`);
-      const result = await scrapePlaceDetail(context, placeLinks[i], i + 1);
-      if (result) results.push(result);
-    }
+    const CONCURRENCY = 3;
+    const ordered: (ScrapedBusiness | null)[] = new Array(placeLinks.length).fill(null);
+    const executing = new Set<Promise<void>>();
 
+    for (let i = 0; i < placeLinks.length; i++) {
+      const idx = i;
+      console.log(`[scrape] queuing rank ${idx + 1}/${placeLinks.length}`);
+      const p: Promise<void> = scrapePlaceDetail(context, placeLinks[idx], idx + 1)
+        .then((r) => { ordered[idx] = r; })
+        .finally(() => executing.delete(p));
+      executing.add(p);
+      if (executing.size >= CONCURRENCY) await Promise.race(executing);
+    }
+    await Promise.all(executing);
+
+    const results = ordered.filter((r): r is ScrapedBusiness => r !== null);
     console.log(`[scrape] done — ${results.length}/${placeLinks.length} succeeded`);
     return results;
   } finally {
@@ -199,12 +208,12 @@ async function getPlaceLinks(
     await page.waitForSelector('[role="feed"]', { timeout: 15000 });
 
     // Scroll the feed to load more results
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 3; i++) {
       await page.evaluate(() => {
         const feed = document.querySelector('[role="feed"]');
-        if (feed) feed.scrollTop += 800;
+        if (feed) feed.scrollTop += 1200;
       });
-      await delay(1200);
+      await delay(700);
     }
 
     const links: string[] = await page.$$eval(
