@@ -67,6 +67,7 @@ async function scrapeViaSerp(
     ll,
     hl: "en",
     gl: "us",
+    num: "20",
     api_key: apiKey,
   });
 
@@ -89,7 +90,7 @@ async function scrapeViaSerp(
   const places = data.local_results ?? [];
   console.log(`[serp] got ${places.length} local results`);
 
-  return places.slice(0, 10).map((p, i): ScrapedBusiness => {
+  return places.slice(0, 20).map((p, i): ScrapedBusiness => {
     const status = p.hours?.current_status ?? "";
     const openNow = /open now/i.test(status)
       ? true
@@ -172,7 +173,7 @@ export async function scrapeGoogleMaps(
 
     if (!placeLinks.length) return [];
 
-    const CONCURRENCY = 2;
+    const CONCURRENCY = 3;
     const ordered: (ScrapedBusiness | null)[] = new Array(placeLinks.length).fill(null);
     const executing = new Set<Promise<void>>();
 
@@ -223,13 +224,22 @@ async function getPlaceLinks(
     // Wait for the results feed
     await page.waitForSelector('[role="feed"]', { timeout: 15000 });
 
-    // Scroll the feed to load more results
-    for (let i = 0; i < 3; i++) {
+    // Scroll the feed to load more results — keep scrolling until 20 links found or feed stops growing
+    let prevCount = 0;
+    for (let i = 0; i < 12; i++) {
       await page.evaluate(() => {
         const feed = document.querySelector('[role="feed"]');
-        if (feed) feed.scrollTop += 1200;
+        if (feed) feed.scrollTop += 1500;
       });
-      await delay(700);
+      await delay(1000);
+
+      const count = await page.$$eval(
+        '[role="feed"] a[href*="/maps/place/"]',
+        (anchors) => new Set((anchors as HTMLAnchorElement[]).map((a) => a.href)).size
+      );
+      if (count >= 20) break;
+      if (count === prevCount && i > 3) break; // feed stopped growing
+      prevCount = count;
     }
 
     const links: string[] = await page.$$eval(
@@ -246,7 +256,7 @@ async function getPlaceLinks(
       }
     );
 
-    return links.slice(0, 10);
+    return links.slice(0, 20);
   } finally {
     await page.close();
   }
