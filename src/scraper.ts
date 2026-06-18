@@ -283,7 +283,7 @@ async function scrapePlaceDetail(
 
     await page.waitForSelector("h1", { timeout: 10000 });
 
-    const data = await page.evaluate((): Omit<ScrapedBusiness, "rank" | "mapsUrl"> => {
+    const data = await page.evaluate((): Omit<ScrapedBusiness, "rank" | "mapsUrl" | "todayHours"> => {
       function text(sel: string): string {
         return document.querySelector(sel)?.textContent?.trim() ?? "";
       }
