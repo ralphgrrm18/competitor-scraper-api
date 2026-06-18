@@ -310,33 +310,47 @@ async function scrapePlaceDetail(
         (document.querySelector('a[aria-label*="website" i]') as HTMLAnchorElement);
       const website = websiteEl?.href || null;
 
-      // --- Open / closed ---
-      const openEl =
-        document.querySelector("span.ZDu9vd span") ||
-        document.querySelector('[data-hide-tooltip-on-mobile] span');
-      const openText = (openEl as HTMLElement)?.innerText?.toLowerCase() ?? "";
-      const openNow = /open\s+now|open\s+24/i.test(openText)
-        ? true
-        : /\bclosed\b/i.test(openText)
-        ? false
-        : null;
-
       // --- Hours ---
       const hoursRows = Array.from(document.querySelectorAll("table.WgFkxc tr, .t39EBf tr"));
       const weekdayHours = hoursRows
         .map((r) => (r as HTMLElement).innerText?.trim())
         .filter(Boolean);
 
+      // --- Open / closed ---
+      const openEl =
+        document.querySelector("span.ZDu9vd span") ||
+        document.querySelector('[data-hide-tooltip-on-mobile] span');
+      const openText = (openEl as HTMLElement)?.innerText?.toLowerCase() ?? "";
+      let openNow: boolean | null = /open\s+now|open\s+24/i.test(openText)
+        ? true
+        : /\bclosed\b/i.test(openText)
+        ? false
+        : null;
+      // Fallback: derive from today's hours row when the status element is absent
+      if (openNow === null && weekdayHours.length > 0) {
+        const today = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
+        const todayRow = weekdayHours.find((r) => r.includes(today)) ?? "";
+        if (/open 24 hours/i.test(todayRow)) openNow = true;
+        else if (/\bclosed\b/i.test(todayRow)) openNow = false;
+      }
+
       // --- Photo count ---
-      // Strategy 1: aria-label on button/link containing "photo" and a number
+      // Strategy 1: aria-label on any element containing "photo" and a number
       const photoCountEl = document.querySelector('[aria-label*="photo" i]');
       const photoLabel = photoCountEl?.getAttribute("aria-label") ?? "";
       const photoMatch = photoLabel.match(/([\d,]+)/);
       let photoCount = photoMatch ? parseInt(photoMatch[1].replace(/,/g, ""), 10) : 0;
-      // Strategy 2: any element whose text content says "N photos"
+      // Strategy 2: text content "N photos"
       if (photoCount === 0) {
         for (const el of Array.from(document.querySelectorAll("button, a, span"))) {
           const m = (el.textContent ?? "").match(/([\d,]+)\s+photos?/i);
+          if (m) { photoCount = parseInt(m[1].replace(/,/g, ""), 10); break; }
+        }
+      }
+      // Strategy 3: scan all aria-labels on the page
+      if (photoCount === 0) {
+        for (const el of Array.from(document.querySelectorAll("[aria-label]"))) {
+          const m = (el.getAttribute("aria-label") ?? "").match(/([\d,]+)\s*photos?/i);
           if (m) { photoCount = parseInt(m[1].replace(/,/g, ""), 10); break; }
         }
       }
