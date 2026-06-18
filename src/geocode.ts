@@ -15,15 +15,17 @@ export async function geocodeLocation(location: string): Promise<Coords> {
     },
   });
 
-  if (!res.ok) throw new Error(`Nominatim error: ${res.status}`);
+  if (!res.ok) throw new Error(`Geocoding service error (${res.status}) — please try again.`);
 
-  const data = (await res.json()) as Array<{
-    lat: string;
-    lon: string;
-    display_name: string;
-  }>;
+  const text = await res.text();
+  let data: Array<{ lat: string; lon: string; display_name: string }>;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("Geocoding service temporarily unavailable — please try again in a moment.");
+  }
 
-  if (!data.length) throw new Error(`Could not geocode "${location}"`);
+  if (!data.length) throw new Error(`Could not find location: "${location}"`);
 
   return {
     lat: parseFloat(data[0].lat),
