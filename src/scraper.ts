@@ -157,9 +157,14 @@ export async function scrapeGoogleMaps(
       viewport: { width: 1280, height: 900 },
     });
 
-    await context.route(/\.(png|jpg|jpeg|gif|webp|svg|woff2?|ttf)(\?.*)?$/, (r) =>
+    await context.route(/\.(png|jpg|jpeg|gif|webp|svg|woff2?|ttf|mp4|mp3|ogg|wasm)(\?.*)?$/, (r) =>
       r.abort()
     );
+    await context.route("**/*", (route) => {
+      const type = route.request().resourceType();
+      if (type === "media" || type === "stylesheet") route.abort();
+      else route.continue();
+    });
 
     console.log(`[scrape] mode=maps keyword="${keyword}" at ${lat},${lng}`);
     const placeLinks = await getPlaceLinks(context, keyword, lat, lng);
@@ -181,6 +186,17 @@ export async function scrapeGoogleMaps(
       if (executing.size >= CONCURRENCY) await Promise.race(executing);
     }
     await Promise.all(executing);
+
+    // Retry any crashed/timed-out pages sequentially
+    const toRetry = placeLinks
+      .map((link, i) => ({ link, i }))
+      .filter(({ i }) => ordered[i] === null);
+    if (toRetry.length > 0) {
+      console.log(`[scrape] retrying ${toRetry.length} failed page(s) sequentially`);
+      for (const { link, i } of toRetry) {
+        ordered[i] = await scrapePlaceDetail(context, link, i + 1);
+      }
+    }
 
     const results = ordered.filter((r): r is ScrapedBusiness => r !== null);
     console.log(`[scrape] done — ${results.length}/${placeLinks.length} succeeded`);
