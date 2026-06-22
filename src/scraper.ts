@@ -215,7 +215,7 @@ async function scrapeListPage(
     const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
     const today = days[new Date().getDay()];
 
-    const { businesses, debugCards } = await page.evaluate((todayName: string) => {
+    const businesses = await page.evaluate((todayName: string) => {
       const cards = Array.from(document.querySelectorAll('.Nv2PK'));
       const seen = new Set<string>();
       const businesses: ScrapedBusiness[] = [];
