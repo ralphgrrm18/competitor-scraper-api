@@ -255,6 +255,15 @@ async function scrapeListPage(
         const hoursMatch = fullText.match(/closes?\s+\d+\s*[ap]m|open\s+24\s+hours|open\s+now/i);
         const todayHours = hoursMatch ? `${todayName} · ${hoursMatch[0].trim()}` : null;
 
+        const websiteEl = (
+          card.querySelector('a[data-item-id="authority"]') ??
+          card.querySelector('a[aria-label*="website" i]') ??
+          Array.from(card.querySelectorAll('a[href]')).find(
+            (a) => (a as HTMLAnchorElement).href.startsWith('http') && !(a as HTMLAnchorElement).href.includes('google.com')
+          )
+        ) as HTMLAnchorElement | null;
+        const website = websiteEl?.href ?? null;
+
         businesses.push({
           rank: businesses.length + 1,
           name,
@@ -263,7 +272,7 @@ async function scrapeListPage(
           reviewCount,
           category,
           phone: null,
-          website: null,
+          website,
           openNow,
           weekdayHours: [],
           todayHours,
