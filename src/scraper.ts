@@ -14,7 +14,6 @@ export interface ScrapedBusiness {
   todayHours: string | null;
   mapsUrl: string;
   photoCount: number;
-  latestReviewRecency: string | null;
 }
 
 const USER_AGENT =
@@ -120,7 +119,6 @@ async function scrapeViaSerp(
         ? `https://www.google.com/maps/place/?q=place_id:${p.place_id}`
         : "",
       photoCount: 0,
-      latestReviewRecency: null,
     };
   });
 }
@@ -221,7 +219,6 @@ async function scrapeListPage(
       const cards = Array.from(document.querySelectorAll('.Nv2PK'));
       const seen = new Set<string>();
       const businesses: ScrapedBusiness[] = [];
-      const debugCards: string[][] = [];
 
       for (const card of cards) {
         const anchor = card.querySelector('a.hfpxzc') as HTMLAnchorElement | null;
@@ -267,16 +264,6 @@ async function scrapeListPage(
         ) as HTMLAnchorElement | null;
         const website = websiteEl?.href ?? null;
 
-        const recencyPattern = /\b(\d+|a|an)\s+(second|minute|hour|day|week|month|year)s?\s+ago\b/i;
-        const cardTexts = Array.from(card.querySelectorAll('span, div'))
-          .map((el) => (el as HTMLElement).innerText?.trim() ?? '')
-          .filter((t) => t.length > 0 && t.length < 60);
-        const recencyMatch = cardTexts
-          .map((t) => t.match(recencyPattern)?.[0] ?? null)
-          .find((t) => t !== null) ?? null;
-
-        if (businesses.length < 3) debugCards.push(cardTexts.slice(0, 20));
-
         businesses.push({
           rank: businesses.length + 1,
           name,
@@ -291,18 +278,13 @@ async function scrapeListPage(
           todayHours,
           mapsUrl,
           photoCount: 0,
-          latestReviewRecency: recencyMatch,
         });
 
         if (businesses.length >= 10) break;
       }
 
-      return { businesses, debugCards };
-    }, today) as { businesses: ScrapedBusiness[]; debugCards: string[][] };
-
-    debugCards.forEach((texts, i) =>
-      console.log(`[debug card #${i + 1}] texts=${JSON.stringify(texts)}`)
-    );
+      return businesses;
+    }, today) as ScrapedBusiness[];
 
     return businesses;
   } finally {
