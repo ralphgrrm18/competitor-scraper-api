@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { geocodeLocation } from "./geocode";
 import { scrapeGoogleMaps, ScrapeMode } from "./scraper";
+import { scrapeGBPDetail } from "./gbp-scraper";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -59,6 +60,22 @@ app.post("/api/scrape", async (req, res) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Scrape failed";
     console.error("[scrape]", message);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/scrape-gbp", async (req, res) => {
+  const { url } = req.body as { url?: string };
+  if (!url?.trim()) {
+    res.status(400).json({ error: "url is required" });
+    return;
+  }
+  try {
+    const result = await scrapeGBPDetail(url.trim());
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Scrape failed";
+    console.error("[scrape-gbp]", message);
     res.status(500).json({ error: message });
   }
 });
