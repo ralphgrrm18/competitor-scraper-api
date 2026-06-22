@@ -217,10 +217,11 @@ async function scrapeListPage(
     const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
     const today = days[new Date().getDay()];
 
-    const results: ScrapedBusiness[] = await page.evaluate((todayName: string) => {
+    const { businesses, debugCards } = await page.evaluate((todayName: string) => {
       const cards = Array.from(document.querySelectorAll('.Nv2PK'));
       const seen = new Set<string>();
       const businesses: ScrapedBusiness[] = [];
+      const debugCards: string[][] = [];
 
       for (const card of cards) {
         const anchor = card.querySelector('a.hfpxzc') as HTMLAnchorElement | null;
@@ -273,7 +274,8 @@ async function scrapeListPage(
         const recencyMatch = cardTexts
           .map((t) => t.match(recencyPattern)?.[0] ?? null)
           .find((t) => t !== null) ?? null;
-        const debugTexts = cardTexts.slice(0, 20);
+
+        if (businesses.length < 3) debugCards.push(cardTexts.slice(0, 20));
 
         businesses.push({
           rank: businesses.length + 1,
@@ -292,17 +294,17 @@ async function scrapeListPage(
           latestReviewRecency: recencyMatch,
         });
 
-        if (businesses.length <= 3) {
-          console.log(`[debug card #${businesses.length}] recency="${recencyMatch}" texts=${JSON.stringify(debugTexts)}`);
-        }
-
         if (businesses.length >= 10) break;
       }
 
-      return businesses;
-    }, today) as ScrapedBusiness[];
+      return { businesses, debugCards };
+    }, today) as { businesses: ScrapedBusiness[]; debugCards: string[][] };
 
-    return results;
+    debugCards.forEach((texts, i) =>
+      console.log(`[debug card #${i + 1}] texts=${JSON.stringify(texts)}`)
+    );
+
+    return businesses;
   } finally {
     await page.close();
   }
