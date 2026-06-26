@@ -12,7 +12,14 @@ interface SerpOrganicResult {
 }
 
 interface SerpKnowledgeGraph {
+  title?: string;
   description?: string;
+  rating?: number;
+  reviews?: number;
+  address?: string;
+  phone?: string;
+  website?: string;
+  type?: string;
 }
 
 
@@ -189,13 +196,14 @@ async function fetchOrganicAndFeatures(
     },
   ];
 
-  // First local result that matches the brand name (or fall back to position 1)
+  // Try local_results first, fall back to knowledge_graph for branded searches
   const firstWord = brandName.toLowerCase().split(" ")[0];
   const localMatch =
     data.local_results?.find((r) =>
       r.title?.toLowerCase().includes(firstWord)
     ) ?? data.local_results?.[0];
 
+  const kg = data.knowledge_graph;
   const localPresence: LocalPresence | null = localMatch
     ? {
         name: localMatch.title ?? brandName,
@@ -205,6 +213,16 @@ async function fetchOrganicAndFeatures(
         address: localMatch.address ?? null,
         phone: localMatch.phone ?? null,
         website: localMatch.website ?? null,
+      }
+    : (kg?.rating || kg?.reviews)
+    ? {
+        name: kg.title ?? brandName,
+        rating: kg.rating ?? null,
+        reviewCount: kg.reviews ?? null,
+        position: null,
+        address: kg.address ?? null,
+        phone: kg.phone ?? null,
+        website: kg.website ?? null,
       }
     : null;
 
