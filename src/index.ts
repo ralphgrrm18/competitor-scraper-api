@@ -3,6 +3,7 @@ import cors from "cors";
 import { geocodeLocation } from "./geocode";
 import { scrapeGoogleMaps, ScrapeMode } from "./scraper";
 import { scrapeGBPDetail } from "./gbp-scraper";
+import { getBrandVisibility } from "./brand-visibility";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -76,6 +77,31 @@ app.post("/api/scrape-gbp", async (req, res) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Scrape failed";
     console.error("[scrape-gbp]", message);
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/brand-visibility", async (req, res) => {
+  const { brandName, domain } = req.body as {
+    brandName?: string;
+    domain?: string;
+  };
+
+  if (!brandName?.trim()) {
+    res.status(400).json({ error: "brandName is required" });
+    return;
+  }
+  if (!domain?.trim()) {
+    res.status(400).json({ error: "domain is required" });
+    return;
+  }
+
+  try {
+    const result = await getBrandVisibility(brandName.trim(), domain.trim());
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Brand visibility check failed";
+    console.error("[brand-visibility]", message);
     res.status(500).json({ error: message });
   }
 });
