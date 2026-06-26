@@ -5,16 +5,16 @@ interface SerpOrganicResult {
   title?: string;
   link?: string;
   snippet?: string;
+  sitelinks?: {
+    inline?: { title?: string; link?: string }[];
+    expanded?: { title?: string; link?: string; snippet?: string }[];
+  };
 }
 
 interface SerpKnowledgeGraph {
   description?: string;
 }
 
-interface SerpSitelinks {
-  inline?: { title?: string }[];
-  expanded?: { title?: string }[];
-}
 
 interface SerpLocalResult {
   position?: number;
@@ -37,7 +37,7 @@ interface SerpNewsResult {
 interface SerpGoogleResponse {
   organic_results?: SerpOrganicResult[];
   knowledge_graph?: SerpKnowledgeGraph;
-  sitelinks?: SerpSitelinks;
+  sitelinks?: { inline?: unknown[]; expanded?: unknown[] };
   local_results?: SerpLocalResult[];
   news_results?: SerpNewsResult[];
   top_stories?: SerpNewsResult[];
@@ -154,8 +154,12 @@ async function fetchOrganicAndFeatures(
     };
   });
 
+  const firstResult = data.organic_results?.[0];
   const hasSitelinks = !!(
-    data.sitelinks?.inline?.length || data.sitelinks?.expanded?.length
+    firstResult?.sitelinks?.inline?.length ||
+    firstResult?.sitelinks?.expanded?.length ||
+    data.sitelinks?.inline?.length ||
+    data.sitelinks?.expanded?.length
   );
   const hasLocalPack = !!(data.local_results?.length);
   const hasNews = !!(data.news_results?.length || data.top_stories?.length);
