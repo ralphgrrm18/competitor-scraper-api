@@ -111,6 +111,15 @@ function isGoogleUrl(url: string | null | undefined): boolean {
   try { return new URL(url).hostname.includes("google.com"); } catch { return false; }
 }
 
+function safeReviewCount(val: unknown): number | null {
+  if (typeof val === "number" && isFinite(val)) return Math.round(val);
+  if (typeof val === "string") {
+    const n = parseInt(val.replace(/,/g, ""), 10);
+    return isNaN(n) ? null : n;
+  }
+  return null;
+}
+
 function normalizeDomain(domain: string): string {
   return domain
     .replace(/^https?:\/\//i, "")
@@ -213,7 +222,7 @@ async function fetchOrganicAndFeatures(
     ? {
         name: localMatch.title ?? brandName,
         rating: localMatch.rating ?? null,
-        reviewCount: localMatch.reviews ?? null,
+        reviewCount: safeReviewCount(localMatch.reviews),
         position: localMatch.position ?? null,
         address: localMatch.address ?? null,
         phone: localMatch.phone ?? null,
@@ -223,7 +232,7 @@ async function fetchOrganicAndFeatures(
     ? {
         name: kg.title ?? brandName,
         rating: kg.rating ?? null,
-        reviewCount: kg.reviews ?? null,
+        reviewCount: safeReviewCount(kg.reviews),
         position: null,
         address: kg.address ?? null,
         phone: kg.phone ?? null,
