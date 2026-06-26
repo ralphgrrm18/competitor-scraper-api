@@ -106,6 +106,11 @@ export interface BrandVisibilityResult {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function isGoogleUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try { return new URL(url).hostname.includes("google.com"); } catch { return false; }
+}
+
 function normalizeDomain(domain: string): string {
   return domain
     .replace(/^https?:\/\//i, "")
@@ -212,7 +217,7 @@ async function fetchOrganicAndFeatures(
         position: localMatch.position ?? null,
         address: localMatch.address ?? null,
         phone: localMatch.phone ?? null,
-        website: localMatch.website ?? null,
+        website: isGoogleUrl(localMatch.website) ? null : (localMatch.website ?? null),
       }
     : (kg?.rating || kg?.reviews)
     ? {
@@ -222,7 +227,7 @@ async function fetchOrganicAndFeatures(
         position: null,
         address: kg.address ?? null,
         phone: kg.phone ?? null,
-        website: kg.website ?? null,
+        website: isGoogleUrl(kg.website) ? null : (kg.website ?? null),
       }
     : null;
 
